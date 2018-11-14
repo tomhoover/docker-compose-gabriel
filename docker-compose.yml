@@ -1,0 +1,293 @@
+version: '2.4'
+services:
+  letsencrypt:
+    image: linuxserver/letsencrypt
+    container_name: le
+    restart: always
+    ports:
+      - 81:80
+      - 443:443
+    volumes:
+      - ../letsencrypt:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - EMAIL=${EMAIL}
+      - URL=${DOMAIN}
+      - SUBDOMAINS=wildcard
+      - ONLY_SUBDOMAINS=false
+      - DHLEVEL=4096
+      - VALIDATION=dns
+      - DNSPLUGIN=route53
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      heimdall:
+        condition: service_started
+      home-assistant:
+        condition: service_started
+      ombi:
+        condition: service_started
+      plex:
+        condition: service_started
+
+  heimdall:
+    image: linuxserver/heimdall
+    container_name: heimdall
+    restart: unless-stopped
+#    ports:
+#      - 80:80
+#      - 444:443
+    volumes:
+      - ../heimdall:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    mem_limit: 4096m
+
+  home-assistant:
+    image: homeassistant/home-assistant
+    container_name: hass
+    restart: always
+#    ports:
+#      - 8123:8123
+    volumes:
+      - ../hass:/config
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - HOST_OS=Unraid
+        # suppress warnings per https://community.home-assistant.io/t/endless-insecurerequestwarning-errors-with-unifi/31831/13
+      - PYTHONWARNINGS=ignore:Unverified HTTPS request
+    devices:
+      - /dev/zwave
+    network_mode: host
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+      mqttwarn:
+        condition: service_started
+
+  ombi:
+    image: linuxserver/ombi
+    container_name: ombi
+    restart: unless-stopped
+#    ports:
+#      - 3579:3579
+    volumes:
+      - ../ombi:/config
+    depends_on:
+      sonarr:
+        condition: service_started
+      radarr:
+        condition: service_started
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  plex:
+    image: linuxserver/plex
+    container_name: plex
+    restart: always
+    volumes:
+      - ../plex:/config
+      - /mnt/user:/data
+      - /mnt/disks/C300-CTFDDAC128MAG_00000000110703039BAE-part1/tmp/transcode:/transcode:rw,slave
+    environment:
+      - VERSION=plexpass
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    network_mode: host
+
+  portainer:
+    image: portainer/portainer
+    container_name: portainer
+    restart: always
+    ports:
+      - 9000:9000
+    volumes:
+      - ../portainer:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=${TZ}
+    command: -H unix:///var/run/docker.sock
+
+  influxdb:
+    image: influxdb
+    container_name: influxdb
+    restart: always
+    ports:
+      - 8086:8086
+    volumes:
+      - ../influxdb:/var/lib/influxdb
+    environment:
+      - TZ=${TZ}
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://192.168.2.90:8086/ping"]
+      interval: 30s
+      timeout: 1s
+      retries: 24
+
+  mqtt:
+    image: spants/mqtt
+#    image: eclipse-mosquitto
+    container_name: mqtt
+    restart: always
+    ports:
+      - 1883:1883
+      - 9001:9001
+    volumes:
+      - ../MQTT:/config
+#      - ../mqtt/config:/mosquitto/config
+#      - ../mqtt/data:/mosquitto/data
+#      - ../mqtt/log:/mosquitto/log
+#    environment:
+#      - TZ=${TZ}
+
+  mqttwarn:
+    image: jpmens/mqttwarn
+    container_name: warnmqtt
+    restart: always
+    volumes:
+      - ../mqttwarn:/opt/mqttwarn/conf
+    depends_on:
+      mqtt:
+        condition: service_started
+    environment:
+      - TZ=${TZ}
+      - MQTTWARNINI=/opt/mqttwarn/conf/mqttwarn.ini
+      - MQTTWARNLOG=/opt/mqttwarn/conf/mqttwarn.log
+
+  tautulli:
+    image: linuxserver/tautulli
+    container_name: tautulli
+    restart: unless-stopped
+    ports:
+      - 8181:8181
+    volumes:
+      - ../tautulli:/config
+      - ../plex/Library/Application\ Support/Plex\ Media\ Server/Logs:/logs:ro
+    depends_on:
+      plex:
+        condition: service_started
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  radarr:
+    image: linuxserver/radarr
+    container_name: radarr
+    restart: unless-stopped
+#    ports:
+#      - 7878:7878
+    volumes:
+      - ../radarr:/config
+      - /mnt/user/downloads:/downloads
+      - /mnt/user/Plex/Movies:/movies
+    depends_on:
+      hydra2:
+        condition: service_started
+      nzbget:
+        condition: service_started
+      transmission:
+        condition: service_started
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  sonarr:
+    image: linuxserver/sonarr
+    container_name: sonarr
+    restart: unless-stopped
+#    ports:
+#      - 8989:8989
+    volumes:
+      - ../sonarr:/config
+      - /mnt/user/downloads:/downloads
+      - /mnt/user/Plex/TV:/tv
+    depends_on:
+      hydra2:
+        condition: service_started
+      nzbget:
+        condition: service_started
+      transmission:
+        condition: service_started
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  hydra2:
+    image: linuxserver/hydra2
+    container_name: hydra2
+    restart: unless-stopped
+    ports:
+      - 5076:5076
+    volumes:
+      - ../hydra2:/config
+      - /mnt/user/downloads:/downloads
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  nzbget:
+    image: linuxserver/nzbget
+    container_name: nzbget
+    restart: unless-stopped
+    ports:
+      - 6789:6789
+    volumes:
+      - ../nzbget:/config
+      - /mnt/user/downloads:/downloads
+    depends_on:
+      hydra2:
+        condition: service_started
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+
+  transmission:
+    image: haugene/transmission-openvpn
+    container_name: transmission
+    restart: unless-stopped
+    ports:
+      - 9091:9091
+    volumes:
+      - ../transmission:/config
+      - /mnt/user/downloads:/data
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - OPENVPN_PROVIDER=${VPN_PROVIDER}
+      - OPENVPN_CONFIG=${VPN_CONFIG}
+      - OPENVPN_USERNAME=${VPN_USERNAME}
+      - OPENVPN_PASSWORD=${VPN_PASSWORD}
+      - OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - LOCAL_NETWORK=192.168.0.0/24
+      - WEBPROXY_ENABLED=false
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+
+#  grafana:
+#    image: grafana/grafana
+#    container_name: grafana
+#    restart: unless-stopped
+#    environment:
+#      - "GF_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+#    volumes:
+#      - ../grafana/config/grafana.ini:/etc/grafana/grafana.ini
+#      - ../grafana/data:/var/lib/grafana
